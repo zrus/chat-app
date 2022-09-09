@@ -1,10 +1,12 @@
 mod behaviour;
+mod constants;
 mod event;
 mod helper;
 mod opts;
 
 use std::io::{Error, ErrorKind};
 use std::net::Ipv4Addr;
+use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -43,6 +45,8 @@ use behaviour::Behaviour;
 use event::Event;
 use helper::generate_ed25519;
 use opts::{Mode, Opts};
+
+use crate::constants::{BOODSTRAP_ADDRESS, BOOT_NODES};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -116,7 +120,7 @@ async fn main() -> Result<()> {
     let store = MemoryStore::new(local_peer_id);
     let kademlia = Kademlia::with_config(local_peer_id, store, config);
 
-    let behaviour = Behaviour {
+    let mut behaviour = Behaviour {
       relay_client: client,
       ping: Ping::new(PingConfig::new()),
       identify: Identify::new(IdentifyConfig::new(
@@ -128,6 +132,15 @@ async fn main() -> Result<()> {
       mdns,
       kademlia,
     };
+
+    for peer in BOOT_NODES {
+      behaviour.kademlia.add_address(
+        &PeerId::from_str(peer)?,
+        BOODSTRAP_ADDRESS.parse::<Multiaddr>()?,
+      );
+    }
+
+    behaviour.kademlia.bootstrap()?;
 
     // build the swarm
     SwarmBuilder::new(transport, behaviour, local_peer_id)
@@ -153,8 +166,8 @@ async fn main() -> Result<()> {
               match event.unwrap() {
                   SwarmEvent::NewListenAddr { address, .. } => {
                       info!("Listening on {:?}", address);
-                      swarm.behaviour_mut().kademlia.add_address(&local_peer_id, address);
                   }
+                  SwarmEvent::Behaviour(Event::Kademlia(_)) => {}
                   event => panic!("{:?}", event),
               }
           }
@@ -168,7 +181,7 @@ async fn main() -> Result<()> {
 
   // Connect to the relay server. Not for the reservation or relayed connection, but to (a) learn
   // our local public address and (b) enable a freshly started relay to learn its public address.
-  swarm.dial(opts.relay_address.clone()).unwrap();
+  // swarm.dial(opts.relay_address.clone()).unwrap();
   block_on(async {
     let mut learned_observed_addr = false;
     let mut told_relay_observed_addr = false;
@@ -178,6 +191,7 @@ async fn main() -> Result<()> {
         SwarmEvent::NewListenAddr { .. } => {}
         SwarmEvent::Dialing { .. } => {}
         SwarmEvent::ConnectionEstablished { .. } => {}
+        SwarmEvent::Behaviour(Event::Kademlia(_)) => {}
         SwarmEvent::Behaviour(Event::Ping(_)) => {}
         SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Sent { .. })) => {
           info!("Told relay its public address.");
@@ -213,23 +227,23 @@ async fn main() -> Result<()> {
     }
   });
 
-  match opts.mode {
-    Mode::Dial => {
-      swarm
-        .dial(
-          opts
-            .relay_address
-            .with(Protocol::P2pCircuit)
-            .with(Protocol::P2p(opts.remote_peer_id.unwrap().into())),
-        )
-        .unwrap();
-    }
-    Mode::Listen => {
-      swarm
-        .listen_on(opts.relay_address.with(Protocol::P2pCircuit))
-        .unwrap();
-    }
-  }
+  // match opts.mode {
+  //   Mode::Dial => {
+  //     swarm
+  //       .dial(
+  //         opts
+  //           .relay_address
+  //           .with(Protocol::P2pCircuit)
+  //           .with(Protocol::P2p(opts.remote_peer_id.unwrap().into())),
+  //       )
+  //       .unwrap();
+  //   }
+  //   Mode::Listen => {
+  // swarm
+  //   .listen_on(opts.relay_address.with(Protocol::P2pCircuit))
+  //   .unwrap();
+  //   }
+  // }
 
   let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
 

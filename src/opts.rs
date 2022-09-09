@@ -20,6 +20,14 @@ pub struct Opts {
   /// Peer ID of the remote peer to hole punch to.
   #[clap(short, long)]
   pub remote_peer_id: Option<PeerId>,
+
+  /// Bootstrap ID of the bootstrap node.
+  #[clap(
+    short,
+    long,
+    default_value = "/ip4/3.19.56.240/tcp/4001/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN/p2p-circuit/p2p/12D3KooWDfVV2caaXhXPsZti1wyZPtBj7kckpQ62oSCS3vxJuzyY"
+  )]
+  pub bootstrap_address: Multiaddr,
 }
 
 #[derive(Debug, Parser, PartialEq)]
