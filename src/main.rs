@@ -117,7 +117,6 @@ async fn main() -> Result<()> {
               match event.unwrap() {
                   SwarmEvent::NewListenAddr { address, .. } => {
                       info!("Listening on {:?}", address);
-                      // swarm.behaviour_mut().kademlia.add_address(&local_peer_id, address);
                   }
                   event => panic!("{:?}", event),
               }
