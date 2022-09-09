@@ -1,6 +1,7 @@
 use libp2p::dcutr;
 use libp2p::gossipsub::GossipsubEvent;
 use libp2p::identify::IdentifyEvent;
+
 use libp2p::kad::KademliaEvent;
 use libp2p::mdns::MdnsEvent;
 use libp2p::ping::PingEvent;
@@ -13,8 +14,8 @@ pub enum Event {
   Relay(client::Event),
   Dcutr(dcutr::behaviour::Event),
   Gossipsub(GossipsubEvent),
-  // Kademlia(KademliaEvent),
   Mdns(MdnsEvent),
+  Kademlia(KademliaEvent),
 }
 
 impl From<PingEvent> for Event {
@@ -53,8 +54,8 @@ impl From<MdnsEvent> for Event {
   }
 }
 
-// impl From<KademliaEvent> for Event {
-//   fn from(e: KademliaEvent) -> Self {
-//     Event::Kademlia(e)
-//   }
-// }
+impl From<KademliaEvent> for Event {
+  fn from(e: KademliaEvent) -> Self {
+    Event::Kademlia(e)
+  }
+}

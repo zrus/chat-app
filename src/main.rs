@@ -4,6 +4,7 @@ mod helper;
 mod opts;
 
 use std::net::Ipv4Addr;
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
@@ -13,7 +14,7 @@ use libp2p::gossipsub::{self, MessageAuthenticity, ValidationMode};
 use libp2p::identify::IdentifyEvent;
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{Kademlia, KademliaConfig};
-use libp2p::mdns::{MdnsConfig, MdnsEvent, TokioMdns};
+use libp2p::mdns::{Mdns, MdnsConfig, MdnsEvent};
 use libp2p::relay::v2::client;
 use libp2p::{
   core::{transport::OrTransport, upgrade},
@@ -60,13 +61,13 @@ async fn main() -> Result<()> {
   let transport = OrTransport::new(
     relay_transport,
     block_on(DnsConfig::system(TokioTcpTransport::new(
-      GenTcpConfig::default().port_reuse(true),
+      GenTcpConfig::default().nodelay(true).port_reuse(true),
     )))
     .unwrap(),
   )
   .upgrade(upgrade::Version::V1)
   .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-  .multiplex(libp2p::yamux::YamuxConfig::default())
+  .multiplex(libp2p_yamux::YamuxConfig::default())
   .boxed();
 
   // Create a Gossipsub topic
@@ -74,13 +75,7 @@ async fn main() -> Result<()> {
 
   let mut swarm = {
     // Set mDNS
-    let mdns = TokioMdns::new(MdnsConfig::default()).await?;
-
-    // let mut cfg = KademliaConfig::default();
-    // cfg.set_query_timeout(std::time::Duration::from_secs(5 * 60));
-
-    // let store = MemoryStore::new(local_peer_id);
-    // let kademlia = Kademlia::with_config(local_peer_id, store, cfg);
+    let mdns = block_on(Mdns::new(MdnsConfig::default()))?;
 
     // Set a custom gossipsub
     let gossipsub_config = gossipsub::GossipsubConfigBuilder::default()
@@ -99,6 +94,11 @@ async fn main() -> Result<()> {
     // Subscribes to our topic
     gossipsub.subscribe(&topic).unwrap();
 
+    let mut config = KademliaConfig::default();
+    config.set_query_timeout(Duration::from_secs(5 * 60));
+    let store = MemoryStore::new(local_peer_id);
+    let kademlia = Kademlia::with_config(local_peer_id, store, config);
+
     let behaviour = Behaviour {
       relay_client: client,
       ping: Ping::new(PingConfig::new()),
@@ -109,6 +109,7 @@ async fn main() -> Result<()> {
       dcutr: dcutr::behaviour::Behaviour::new(),
       gossipsub,
       mdns,
+      kademlia,
     };
 
     // build the swarm
@@ -135,6 +136,7 @@ async fn main() -> Result<()> {
               match event.unwrap() {
                   SwarmEvent::NewListenAddr { address, .. } => {
                       println!("Listening on {:?}", address);
+                      swarm.behaviour_mut().kademlia.add_address(&local_peer_id, address);
                   }
                   event => panic!("{:?}", event),
               }
@@ -237,9 +239,6 @@ async fn main() -> Result<()> {
           SwarmEvent::Behaviour(Event::Mdns(event)) => {
             println!("{event:?}");
           }
-          // SwarmEvent::Behaviour(Event::Kademlia(event)) => {
-          //   println!("{event:?}");
-          // }
           SwarmEvent::NewListenAddr { address, .. } => {
               println!("Listening on {:?}", address);
           }
@@ -267,7 +266,7 @@ async fn main() -> Result<()> {
           SwarmEvent::OutgoingConnectionError { peer_id, error } => {
               println!("Outgoing connection error to {:?}: {:?}", peer_id, error);
           }
-          _ => {}
+          event => println!("Other: {event:?}"),
         }
       }
     }
