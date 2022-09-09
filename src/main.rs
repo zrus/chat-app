@@ -30,6 +30,7 @@ use libp2p::{
   tcp::{GenTcpConfig, TokioTcpTransport},
   Multiaddr, PeerId, Transport,
 };
+use log::{error, info};
 use rand::Rng;
 use tokio::io::AsyncBufReadExt;
 
@@ -40,14 +41,16 @@ use opts::{Mode, Opts};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+  env_logger::init();
+
   let opts = Opts::parse();
-  println!("{opts:?}");
+  info!("{opts:?}");
 
   let mut rng = rand::thread_rng();
   let random_seed: u8 = rng.gen();
   let local_key = generate_ed25519(random_seed);
   let local_peer_id = PeerId::from(local_key.public());
-  println!("Local peer id: {:?}", local_peer_id);
+  info!("Local peer id: {:?}", local_peer_id);
 
   // Create a keypair for authenticated encryption of the transport.
   let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
@@ -135,7 +138,7 @@ async fn main() -> Result<()> {
           event = swarm.next() => {
               match event.unwrap() {
                   SwarmEvent::NewListenAddr { address, .. } => {
-                      println!("Listening on {:?}", address);
+                      info!("Listening on {:?}", address);
                       swarm.behaviour_mut().kademlia.add_address(&local_peer_id, address);
                   }
                   event => panic!("{:?}", event),
@@ -163,14 +166,14 @@ async fn main() -> Result<()> {
         SwarmEvent::ConnectionEstablished { .. } => {}
         SwarmEvent::Behaviour(Event::Ping(_)) => {}
         SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Sent { .. })) => {
-          println!("Told relay its public address.");
+          info!("Told relay its public address.");
           told_relay_observed_addr = true;
         }
         SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Received {
           info: IdentifyInfo { observed_addr, .. },
           ..
         })) => {
-          println!("Relay told us our public address: {:?}", observed_addr);
+          info!("Relay told us our public address: {:?}", observed_addr);
           learned_observed_addr = true;
         }
         SwarmEvent::Behaviour(Event::Mdns(event)) => match event {
@@ -187,7 +190,7 @@ async fn main() -> Result<()> {
             }
           }
         },
-        event => println!("{:?}", event),
+        event => panic!("{:?}", event),
       }
 
       if learned_observed_addr && told_relay_observed_addr {
@@ -224,49 +227,49 @@ async fn main() -> Result<()> {
           .behaviour_mut()
           .gossipsub
           .publish(topic.clone(), line.as_bytes()) {
-            println!("{e:?}");
+            info!("{e:?}");
         }
       }
       event = swarm.select_next_some() => {
         match event {
           SwarmEvent::Behaviour(Event::Gossipsub(GossipsubEvent::Message { message, .. })) => {
-            println!(
+            info!(
               "Received: '{:?}' from {:?}",
               String::from_utf8_lossy(&message.data),
               message.source
             );
           }
           SwarmEvent::Behaviour(Event::Mdns(event)) => {
-            println!("{event:?}");
+            info!("{event:?}");
           }
           SwarmEvent::NewListenAddr { address, .. } => {
-              println!("Listening on {:?}", address);
+              info!("Listening on {:?}", address);
           }
           SwarmEvent::Behaviour(Event::Relay(client::Event::ReservationReqAccepted {
               ..
           })) => {
               assert!(opts.mode == Mode::Listen);
-              println!("Relay accepted our reservation request.");
+              info!("Relay accepted our reservation request.");
           }
           SwarmEvent::Behaviour(Event::Relay(event)) => {
-              println!("{:?}", event)
+              info!("{:?}", event)
           }
           SwarmEvent::Behaviour(Event::Dcutr(event)) => {
-              println!("{:?}", event)
+              info!("{:?}", event)
           }
           SwarmEvent::Behaviour(Event::Identify(event)) => {
-              println!("{:?}", event)
+              info!("{:?}", event)
           }
           SwarmEvent::Behaviour(Event::Ping(_)) => {}
           SwarmEvent::ConnectionEstablished {
               peer_id, endpoint, ..
           } => {
-              println!("Established connection to {:?} via {:?}", peer_id, endpoint);
+              info!("Established connection to {:?} via {:?}", peer_id, endpoint);
           }
           SwarmEvent::OutgoingConnectionError { peer_id, error } => {
-              println!("Outgoing connection error to {:?}: {:?}", peer_id, error);
+              error!("Outgoing connection error to {:?}: {:?}", peer_id, error);
           }
-          event => println!("Other: {event:?}"),
+          event => info!("Other: {event:?}"),
         }
       }
     }
