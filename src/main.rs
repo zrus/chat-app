@@ -3,6 +3,7 @@ mod event;
 mod helper;
 mod opts;
 
+use std::io::{Error, ErrorKind};
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
@@ -10,16 +11,20 @@ use anyhow::Result;
 use clap::Parser;
 use futures::stream::StreamExt;
 use futures::{executor::block_on, FutureExt};
+use libp2p::core::muxing::StreamMuxerBox;
+use libp2p::core::upgrade::SelectUpgrade;
 use libp2p::gossipsub::{self, MessageAuthenticity, ValidationMode};
 use libp2p::identify::IdentifyEvent;
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mdns::{Mdns, MdnsConfig, MdnsEvent};
+use libp2p::mplex::MplexConfig;
 use libp2p::relay::v2::client;
+use libp2p::yamux::{WindowUpdateMode, YamuxConfig};
 use libp2p::{
   core::{transport::OrTransport, upgrade},
   dcutr,
-  dns::DnsConfig,
+  dns::TokioDnsConfig,
   gossipsub::GossipsubEvent,
   identify::{Identify, IdentifyConfig, IdentifyInfo},
   multiaddr::Protocol,
@@ -59,18 +64,27 @@ async fn main() -> Result<()> {
 
   let (relay_transport, client) = Client::new_transport_and_behaviour(local_peer_id);
 
-  // Create a tokio-based TCP transport use noise for authenticated
-  // encryption and Mplex for multiplexing of substreams on a TCP stream.
+  let yamux_config = {
+    let mut config = YamuxConfig::default();
+    config.set_max_buffer_size(16 * 1024 * 1024);
+    config.set_receive_window_size(16 * 1024 * 1024);
+    config.set_window_update_mode(WindowUpdateMode::on_receive());
+    config
+  };
+
+  let multiplex_upgrade = SelectUpgrade::new(yamux_config, MplexConfig::new());
+
   let transport = OrTransport::new(
     relay_transport,
-    block_on(DnsConfig::system(TokioTcpTransport::new(
+    TokioDnsConfig::system(TokioTcpTransport::new(
       GenTcpConfig::default().nodelay(true).port_reuse(true),
-    )))
-    .unwrap(),
+    ))?,
   )
   .upgrade(upgrade::Version::V1)
   .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-  .multiplex(libp2p_yamux::YamuxConfig::default())
+  .multiplex(multiplex_upgrade)
+  .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer)))
+  .map_err(|err| Error::new(ErrorKind::Other, err))
   .boxed();
 
   // Create a Gossipsub topic
