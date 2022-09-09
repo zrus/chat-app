@@ -9,6 +9,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use futures::StreamExt;
+use libp2p::core::transport::OrTransport;
+use libp2p::dns::DnsConfig;
+use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mplex;
@@ -31,7 +34,8 @@ use event::Event;
 use helper::generate_ed25519;
 use tokio::select;
 
-use crate::constants::KEY_SEED;
+use crate::constants::{KEY_SEED, RELAY_NODE};
+use crate::helper::block_on;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -46,13 +50,19 @@ async fn main() -> Result<()> {
     .into_authentic(&local_key)
     .expect("Signing libp2p-noise static DH keypair failed.");
 
-  // Create a tokio-based TCP transport use noise for authenticated
-  // encryption and Mplex for multiplexing of substreams on a TCP stream.
-  let transport = TokioTcpTransport::new(GenTcpConfig::default().nodelay(true))
-    .upgrade(upgrade::Version::V1)
-    .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-    .multiplex(mplex::MplexConfig::new())
-    .boxed();
+  let (relay_transport, client) = client::Client::new_transport_and_behaviour(local_peer_id);
+
+  let transport = OrTransport::new(
+    relay_transport,
+    block_on(DnsConfig::system(TokioTcpTransport::new(
+      GenTcpConfig::default().nodelay(true).port_reuse(true),
+    )))
+    .unwrap(),
+  )
+  .upgrade(upgrade::Version::V1)
+  .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
+  .multiplex(mplex::MplexConfig::new())
+  .boxed();
 
   let mut swarm = {
     let mut config = KademliaConfig::default();
@@ -61,6 +71,7 @@ async fn main() -> Result<()> {
     let kademlia = Kademlia::with_config(local_peer_id, store, config);
 
     let behaviour = Behaviour {
+      relay: client,
       ping: Ping::new(PingConfig::new()),
       identify: Identify::new(IdentifyConfig::new(
         "/TODO/0.0.1".to_string(),
@@ -78,13 +89,64 @@ async fn main() -> Result<()> {
       .build()
   };
 
-  swarm
-    .listen_on(
-      Multiaddr::empty()
-        .with("0.0.0.0".parse::<Ipv4Addr>().unwrap().into())
-        .with(Protocol::Tcp(0)),
-    )
-    .unwrap();
+  swarm.listen_on(
+    Multiaddr::empty()
+      .with("0.0.0.0".parse::<Ipv4Addr>().unwrap().into())
+      .with(Protocol::Tcp(0)),
+  )?;
+
+  block_on(async {
+    loop {
+      select! {
+          event = swarm.next() => {
+              match event.unwrap() {
+                  SwarmEvent::NewListenAddr { address, .. } => {
+                      info!("Listening on {:?}", address);
+                      // swarm.behaviour_mut().kademlia.add_address(&local_peer_id, address);
+                  }
+                  event => panic!("{:?}", event),
+              }
+          }
+          _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
+              // Likely listening on all interfaces now, thus continuing by breaking the loop.
+              break;
+          }
+      }
+    }
+  });
+
+  swarm.dial(RELAY_NODE.parse::<Multiaddr>()?)?;
+  block_on(async {
+    let mut learned_observed_addr = false;
+    let mut told_relay_observed_addr = false;
+
+    loop {
+      match swarm.next().await.unwrap() {
+        SwarmEvent::NewListenAddr { .. } => {}
+        SwarmEvent::Dialing { .. } => {}
+        SwarmEvent::ConnectionEstablished { .. } => {}
+        SwarmEvent::Behaviour(Event::Ping(_)) => {}
+        SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Sent { .. })) => {
+          info!("Told relay its public address.");
+          told_relay_observed_addr = true;
+        }
+        SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Received {
+          info: IdentifyInfo { observed_addr, .. },
+          ..
+        })) => {
+          info!("Relay told us our public address: {:?}", observed_addr);
+          learned_observed_addr = true;
+        }
+        event => panic!("{:?}", event),
+      }
+
+      if learned_observed_addr && told_relay_observed_addr {
+        break;
+      }
+    }
+  });
+
+  swarm.listen_on(RELAY_NODE.parse::<Multiaddr>()?.with(Protocol::P2pCircuit))?;
 
   loop {
     select! {
