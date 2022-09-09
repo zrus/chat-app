@@ -2,6 +2,7 @@ use futures::Future;
 use libp2p::identity;
 use tokio::{runtime::Handle, task};
 
+#[allow(unused)]
 pub fn block_on<F: Future>(f: F) -> F::Output {
   task::block_in_place(|| Handle::current().block_on(f))
 }
