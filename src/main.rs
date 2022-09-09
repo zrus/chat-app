@@ -4,18 +4,22 @@ mod event;
 mod helper;
 mod opts;
 
+use std::io::{Error, ErrorKind};
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use anyhow::Result;
 use futures::StreamExt;
+use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::OrTransport;
-use libp2p::dns::DnsConfig;
+use libp2p::core::upgrade::SelectUpgrade;
+use libp2p::dns::TokioDnsConfig;
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{Kademlia, KademliaConfig};
-use libp2p::mplex;
+use libp2p::mplex::MplexConfig;
 use libp2p::relay::v2::client;
+use libp2p::yamux::{WindowUpdateMode, YamuxConfig};
 use libp2p::{
   core::upgrade,
   dcutr,
@@ -52,16 +56,27 @@ async fn main() -> Result<()> {
 
   let (relay_transport, client) = client::Client::new_transport_and_behaviour(local_peer_id);
 
+  let yamux_config = {
+    let mut config = YamuxConfig::default();
+    config.set_max_buffer_size(16 * 1024 * 1024);
+    config.set_receive_window_size(16 * 1024 * 1024);
+    config.set_window_update_mode(WindowUpdateMode::on_receive());
+    config
+  };
+
+  let multiplex_upgrade = SelectUpgrade::new(yamux_config, MplexConfig::new());
+
   let transport = OrTransport::new(
     relay_transport,
-    block_on(DnsConfig::system(TokioTcpTransport::new(
+    TokioDnsConfig::system(TokioTcpTransport::new(
       GenTcpConfig::default().nodelay(true).port_reuse(true),
-    )))
-    .unwrap(),
+    ))?,
   )
   .upgrade(upgrade::Version::V1)
   .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-  .multiplex(mplex::MplexConfig::new())
+  .multiplex(multiplex_upgrade)
+  .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer)))
+  .map_err(|err| Error::new(ErrorKind::Other, err))
   .boxed();
 
   let mut swarm = {
