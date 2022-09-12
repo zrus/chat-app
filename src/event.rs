@@ -9,9 +9,9 @@ use libp2p::relay::v2::client;
 
 #[derive(Debug)]
 pub enum Event {
+  Client(client::Event),
   Ping(PingEvent),
   Identify(IdentifyEvent),
-  Relay(client::Event),
   Dcutr(dcutr::behaviour::Event),
   Gossipsub(GossipsubEvent),
   Mdns(MdnsEvent),
@@ -32,7 +32,7 @@ impl From<IdentifyEvent> for Event {
 
 impl From<client::Event> for Event {
   fn from(e: client::Event) -> Self {
-    Event::Relay(e)
+    Event::Client(e)
   }
 }
 

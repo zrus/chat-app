@@ -8,3 +8,4 @@ pub fn generate_ed25519(secret_key_seed: u8) -> identity::Keypair {
     .expect("this returns `Err` only if the length is wrong; the length is correct; qed");
   identity::Keypair::Ed25519(secret_key.into())
 }
+ 

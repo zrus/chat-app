@@ -12,14 +12,16 @@ use anyhow::Result;
 use clap::Parser;
 use futures::executor::block_on;
 use futures::stream::StreamExt;
+use libp2p::core::transport::OrTransport;
 use libp2p::core::upgrade::SelectUpgrade;
+use libp2p::dns::DnsConfig;
 use libp2p::gossipsub::{self, MessageAuthenticity, ValidationMode};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mdns::{Mdns, MdnsConfig, MdnsEvent};
 use libp2p::mplex::MplexConfig;
-use libp2p::relay::v2::client;
+use libp2p::relay::v2::client::{self, Client};
 use libp2p::yamux::{WindowUpdateMode, YamuxConfig};
 use libp2p::{
   core::upgrade,
@@ -41,6 +43,7 @@ use behaviour::Behaviour;
 use event::Event;
 use helper::generate_ed25519;
 use opts::{Mode, Opts};
+use tokio::select;
 
 use crate::constants::{BOODSTRAP_ADDRESS, BOOT_NODES};
 
@@ -57,6 +60,8 @@ async fn main() -> Result<()> {
   let local_peer_id = PeerId::from(local_key.public());
   info!("Local peer id: {:?}", local_peer_id);
 
+  let (relay_transport, client) = Client::new_transport_and_behaviour(local_peer_id);
+
   // Create a keypair for authenticated encryption of the transport.
   let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
     .into_authentic(&local_key)
@@ -72,11 +77,17 @@ async fn main() -> Result<()> {
 
   let multiplex_upgrade = SelectUpgrade::new(yamux_config, MplexConfig::new());
 
-  let transport = TokioTcpTransport::new(GenTcpConfig::default().port_reuse(true).nodelay(true))
-    .upgrade(upgrade::Version::V1)
-    .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-    .multiplex(multiplex_upgrade)
-    .boxed();
+  let transport = OrTransport::new(
+    relay_transport,
+    block_on(DnsConfig::system(TokioTcpTransport::new(
+      GenTcpConfig::default().port_reuse(true),
+    )))
+    .unwrap(),
+  )
+  .upgrade(upgrade::Version::V1)
+  .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
+  .multiplex(multiplex_upgrade)
+  .boxed();
 
   // Create a Gossipsub topic
   let topic = gossipsub::IdentTopic::new("chat");
@@ -108,6 +119,7 @@ async fn main() -> Result<()> {
     let kademlia = Kademlia::with_config(local_peer_id, store, config);
 
     let mut behaviour = Behaviour {
+      client,
       ping: Ping::new(PingConfig::new()),
       identify: Identify::new(IdentifyConfig::new(
         "/TODO/0.0.1".to_string(),
@@ -143,6 +155,71 @@ async fn main() -> Result<()> {
         .with(Protocol::Tcp(0)),
     )
     .unwrap();
+
+  block_on(async {
+    loop {
+      select! {
+          event = swarm.next() => {
+              match event.unwrap() {
+                  SwarmEvent::NewListenAddr { address, .. } => {
+                      println!("NewListenAddr Listening on {:?}", address);
+                  }
+                  event => {
+                    info!("{:?}", event)
+                  },
+              }
+          }
+          _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+              // Likely listening on all interfaces now, thus continuing by breaking the loop.
+              break;
+          }
+      }
+    }
+  });
+
+  block_on(async {
+    let mut learned_observed_addr = false;
+    let mut told_relay_observed_addr = false;
+
+    loop {
+      match swarm.next().await.unwrap() {
+        SwarmEvent::NewListenAddr { .. } => {}
+        SwarmEvent::Dialing { .. } => {}
+        SwarmEvent::ConnectionEstablished { .. } => {}
+        SwarmEvent::Behaviour(Event::Ping(_)) => {}
+        SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Sent { .. })) => {
+          println!("Told relay its public address.");
+          told_relay_observed_addr = true;
+        }
+        SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Received {
+          info: IdentifyInfo { observed_addr, .. },
+          ..
+        })) => {
+          println!("Relay told us our public address: {:?}", observed_addr);
+          learned_observed_addr = true;
+        }
+        // SwarmEvent::Behaviour(Event::Mdns(event)) => match event {
+        //   MdnsEvent::Discovered(list) => {
+        //     for (peer, _) in list {
+        //       swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
+        //     }
+        //   }
+        //   MdnsEvent::Expired(list) => {
+        //     for (peer, _) in list {
+        //       if !swarm.behaviour().mdns.has_node(&peer) {
+        //         swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer);
+        //       }
+        //     }
+        //   }
+        // },
+        event => info!("{event:?}"),
+      }
+
+      if learned_observed_addr && told_relay_observed_addr {
+        break;
+      }
+    }
+  });
 
   let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
 
@@ -186,13 +263,13 @@ async fn main() -> Result<()> {
               }
             }
           },
-          SwarmEvent::Behaviour(Event::Relay(client::Event::ReservationReqAccepted {
+          SwarmEvent::Behaviour(Event::Client(client::Event::ReservationReqAccepted {
               ..
           })) => {
               assert!(opts.mode == Mode::Listen);
               info!("Relay accepted our reservation request.");
           }
-          SwarmEvent::Behaviour(Event::Relay(event)) => {
+          SwarmEvent::Behaviour(Event::Client(event)) => {
               info!("{:?}", event)
           }
           SwarmEvent::Behaviour(Event::Dcutr(event)) => {
