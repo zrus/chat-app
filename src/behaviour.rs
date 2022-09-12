@@ -1,11 +1,11 @@
 use crate::event::Event;
-use libp2p::dcutr;
 use libp2p::gossipsub::Gossipsub;
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::Kademlia;
 use libp2p::mdns::Mdns;
 use libp2p::ping::Ping;
 use libp2p::relay::v2::client::Client;
+use libp2p::{autonat, dcutr};
 use libp2p::{identify::Identify, NetworkBehaviour};
 
 #[derive(NetworkBehaviour)]
@@ -18,4 +18,5 @@ pub struct Behaviour {
   pub kademlia: Kademlia<MemoryStore>,
   pub gossipsub: Gossipsub,
   pub mdns: Mdns,
+  pub autonat: autonat::Behaviour,
 }

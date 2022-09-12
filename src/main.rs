@@ -12,6 +12,7 @@ use anyhow::Result;
 use clap::Parser;
 use futures::executor::block_on;
 use futures::stream::StreamExt;
+use libp2p::autonat;
 use libp2p::core::transport::OrTransport;
 use libp2p::core::upgrade::SelectUpgrade;
 use libp2p::dns::DnsConfig;
@@ -118,6 +119,8 @@ async fn main() -> Result<()> {
     let store = MemoryStore::new(local_peer_id);
     let kademlia = Kademlia::with_config(local_peer_id, store, config);
 
+    let autonat = autonat::Behaviour::new(local_peer_id, Default::default());
+
     let mut behaviour = Behaviour {
       client,
       ping: Ping::new(PingConfig::new()),
@@ -129,6 +132,7 @@ async fn main() -> Result<()> {
       gossipsub,
       mdns,
       kademlia,
+      autonat,
     };
 
     for peer in BOOT_NODES {

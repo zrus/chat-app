@@ -1,6 +1,6 @@
-use libp2p::dcutr;
 use libp2p::gossipsub::GossipsubEvent;
 use libp2p::identify::IdentifyEvent;
+use libp2p::{autonat, dcutr};
 
 use libp2p::kad::KademliaEvent;
 use libp2p::mdns::MdnsEvent;
@@ -16,6 +16,7 @@ pub enum Event {
   Gossipsub(GossipsubEvent),
   Mdns(MdnsEvent),
   Kademlia(KademliaEvent),
+  Autonat(autonat::Event),
 }
 
 impl From<PingEvent> for Event {
@@ -57,5 +58,11 @@ impl From<MdnsEvent> for Event {
 impl From<KademliaEvent> for Event {
   fn from(e: KademliaEvent) -> Self {
     Event::Kademlia(e)
+  }
+}
+
+impl From<autonat::Event> for Event {
+  fn from(e: autonat::Event) -> Self {
+    Event::Autonat(e)
   }
 }
