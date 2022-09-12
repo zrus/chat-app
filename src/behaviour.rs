@@ -5,12 +5,11 @@ use libp2p::kad::store::MemoryStore;
 use libp2p::kad::Kademlia;
 use libp2p::mdns::Mdns;
 use libp2p::ping::Ping;
-use libp2p::{identify::Identify, relay::v2::client::Client, NetworkBehaviour};
+use libp2p::{identify::Identify, NetworkBehaviour};
 
 #[derive(NetworkBehaviour)]
 #[behaviour(out_event = "Event", event_process = false)]
 pub struct Behaviour {
-  pub relay_client: Client,
   pub ping: Ping,
   pub identify: Identify,
   pub dcutr: dcutr::behaviour::Behaviour,
