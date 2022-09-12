@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
   swarm.listen_on(
     Multiaddr::empty()
       .with("0.0.0.0".parse::<Ipv4Addr>().unwrap().into())
-      .with(Protocol::Tcp(0)),
+      .with(Protocol::Tcp(4003)),
   )?;
 
   let sleep = tokio::time::sleep(BOOTSTRAP_INTERVAL);
