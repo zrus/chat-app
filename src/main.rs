@@ -11,14 +11,11 @@ use std::time::Duration;
 use anyhow::Result;
 use futures::StreamExt;
 use libp2p::core::muxing::StreamMuxerBox;
-use libp2p::core::transport::OrTransport;
 use libp2p::core::upgrade::SelectUpgrade;
-use libp2p::dns::TokioDnsConfig;
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mplex::MplexConfig;
-use libp2p::relay::v2::client;
 use libp2p::yamux::{WindowUpdateMode, YamuxConfig};
 use libp2p::{
   core::upgrade,
@@ -37,9 +34,11 @@ use behaviour::Behaviour;
 use event::Event;
 use helper::generate_ed25519;
 use tokio::select;
+use tokio::time::Instant;
 
-use crate::constants::{KEY_SEED, RELAY_NODE};
-use crate::helper::block_on;
+use crate::constants::KEY_SEED;
+
+const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,7 +53,7 @@ async fn main() -> Result<()> {
     .into_authentic(&local_key)
     .expect("Signing libp2p-noise static DH keypair failed.");
 
-  let (relay_transport, client) = client::Client::new_transport_and_behaviour(local_peer_id);
+  // let (relay_transport, client) = client::Client::new_transport_and_behaviour(local_peer_id);
 
   let yamux_config = {
     let mut config = YamuxConfig::default();
@@ -66,18 +65,15 @@ async fn main() -> Result<()> {
 
   let multiplex_upgrade = SelectUpgrade::new(yamux_config, MplexConfig::new());
 
-  let transport = OrTransport::new(
-    relay_transport,
-    TokioDnsConfig::system(TokioTcpTransport::new(
-      GenTcpConfig::default().nodelay(true).port_reuse(true),
-    ))?,
-  )
-  .upgrade(upgrade::Version::V1)
-  .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-  .multiplex(multiplex_upgrade)
-  .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer)))
-  .map_err(|err| Error::new(ErrorKind::Other, err))
-  .boxed();
+  // Create a tokio-based TCP transport use noise for authenticated
+  // encryption and Mplex for multiplexing of substreams on a TCP stream.
+  let transport = TokioTcpTransport::new(GenTcpConfig::default().nodelay(true))
+    .upgrade(upgrade::Version::V1)
+    .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
+    .multiplex(multiplex_upgrade)
+    .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer)))
+    .map_err(|err| Error::new(ErrorKind::Other, err))
+    .boxed();
 
   let mut swarm = {
     let mut config = KademliaConfig::default();
@@ -86,7 +82,6 @@ async fn main() -> Result<()> {
     let kademlia = Kademlia::with_config(local_peer_id, store, config);
 
     let behaviour = Behaviour {
-      relay: client,
       ping: Ping::new(PingConfig::new()),
       identify: Identify::new(IdentifyConfig::new(
         "/TODO/0.0.1".to_string(),
@@ -110,78 +105,37 @@ async fn main() -> Result<()> {
       .with(Protocol::Tcp(0)),
   )?;
 
-  block_on(async {
-    loop {
-      select! {
-          event = swarm.next() => {
-              match event.unwrap() {
-                  SwarmEvent::NewListenAddr { address, .. } => {
-                      info!("Listening on {:?}", address);
-                  }
-                  event => panic!("{:?}", event),
-              }
-          }
-          _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
-              // Likely listening on all interfaces now, thus continuing by breaking the loop.
-              break;
-          }
-      }
-    }
-  });
-
-  swarm.dial(RELAY_NODE.parse::<Multiaddr>()?)?;
-  block_on(async {
-    let mut learned_observed_addr = false;
-    let mut told_relay_observed_addr = false;
-
-    loop {
-      match swarm.next().await.unwrap() {
-        SwarmEvent::NewListenAddr { .. } => {}
-        SwarmEvent::Dialing { .. } => {}
-        SwarmEvent::ConnectionEstablished { .. } => {}
-        SwarmEvent::Behaviour(Event::Ping(_)) => {}
-        SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Sent { .. })) => {
-          info!("Told relay its public address.");
-          told_relay_observed_addr = true;
-        }
-        SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Received {
-          info: IdentifyInfo { observed_addr, .. },
-          ..
-        })) => {
-          info!("Relay told us our public address: {:?}", observed_addr);
-          learned_observed_addr = true;
-        }
-        event => panic!("{:?}", event),
-      }
-
-      if learned_observed_addr && told_relay_observed_addr {
-        break;
-      }
-    }
-  });
-
-  swarm.listen_on(RELAY_NODE.parse::<Multiaddr>()?.with(Protocol::P2pCircuit))?;
+  let sleep = tokio::time::sleep(BOOTSTRAP_INTERVAL);
+  tokio::pin!(sleep);
 
   loop {
     select! {
+      () = &mut sleep => {
+        sleep.as_mut().reset(Instant::now() + BOOTSTRAP_INTERVAL);
+        let _ = swarm.behaviour_mut().kademlia.bootstrap();
+      }
       event = swarm.select_next_some() => {
         match event {
           SwarmEvent::NewListenAddr { address, .. } => {
               info!("Listening on {:?}", address);
           }
-          SwarmEvent::Behaviour(Event::Relay(client::Event::ReservationReqAccepted {
-              ..
-          })) => {
-              info!("Relay accepted our reservation request.");
-          }
-          SwarmEvent::Behaviour(Event::Relay(event)) => {
-              info!("{:?}", event)
-          }
           SwarmEvent::Behaviour(Event::Dcutr(event)) => {
-              info!("{:?}", event)
+              info!("{:?}", event);
           }
           SwarmEvent::Behaviour(Event::Identify(event)) => {
-              info!("{:?}", event)
+              info!("{:?}", event);
+              if let IdentifyEvent::Received { peer_id, info: IdentifyInfo { listen_addrs, protocols, .. } } = event {
+                if protocols
+                  .iter()
+                  .any(|p| p.as_bytes() == libp2p::kad::protocol::DEFAULT_PROTO_NAME)
+                {
+                  for addr in listen_addrs {
+                    swarm
+                      .behaviour_mut()
+                      .kademlia.add_address(&peer_id, addr);
+                  }
+                }
+              };
           }
           SwarmEvent::Behaviour(Event::Ping(_)) => {}
           SwarmEvent::ConnectionEstablished {

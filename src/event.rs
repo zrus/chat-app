@@ -2,23 +2,14 @@ use libp2p::dcutr;
 use libp2p::identify::IdentifyEvent;
 use libp2p::kad::KademliaEvent;
 use libp2p::ping::PingEvent;
-use libp2p::relay::v2::client;
 
 #[derive(Debug)]
 pub enum Event {
-  Relay(client::Event),
   Ping(PingEvent),
   Identify(IdentifyEvent),
   Dcutr(dcutr::behaviour::Event),
   Kademlia(KademliaEvent),
 }
-
-impl From<client::Event> for Event {
-  fn from(e: client::Event) -> Self {
-    Event::Relay(e)
-  }
-}
-
 impl From<PingEvent> for Event {
   fn from(e: PingEvent) -> Self {
     Event::Ping(e)
