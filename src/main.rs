@@ -112,7 +112,7 @@ async fn main() -> Result<()> {
     select! {
       () = &mut sleep => {
         sleep.as_mut().reset(Instant::now() + BOOTSTRAP_INTERVAL);
-        let _ = swarm.behaviour_mut().kademlia.bootstrap();
+        swarm.behaviour_mut().kademlia.bootstrap()?;
       }
       event = swarm.select_next_some() => {
         match event {
@@ -132,7 +132,8 @@ async fn main() -> Result<()> {
                   for addr in listen_addrs {
                     swarm
                       .behaviour_mut()
-                      .kademlia.add_address(&peer_id, addr);
+                      .kademlia
+                      .add_address(&peer_id, addr);
                   }
                 }
               };
