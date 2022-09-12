@@ -13,4 +13,5 @@ pub struct Behaviour {
   pub ping: Ping,
   pub identify: Identify,
   pub kademlia: Kademlia<MemoryStore>,
+  pub autonat: autonat::Behaviour,
 }

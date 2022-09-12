@@ -1,3 +1,4 @@
+use libp2p::autonat;
 use libp2p::identify::IdentifyEvent;
 use libp2p::kad::KademliaEvent;
 use libp2p::ping::PingEvent;
@@ -9,6 +10,7 @@ pub enum Event {
   Ping(PingEvent),
   Identify(IdentifyEvent),
   Kademlia(KademliaEvent),
+  Autonat(autonat::Event),
 }
 
 impl From<relay::Event> for Event {
@@ -32,5 +34,11 @@ impl From<IdentifyEvent> for Event {
 impl From<KademliaEvent> for Event {
   fn from(e: KademliaEvent) -> Self {
     Event::Kademlia(e)
+  }
+}
+
+impl From<autonat::Event> for Event {
+  fn from(e: autonat::Event) -> Self {
+    Event::Autonat(e)
   }
 }

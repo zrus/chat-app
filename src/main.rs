@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use futures::StreamExt;
+use libp2p::autonat;
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::upgrade::SelectUpgrade;
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
@@ -81,6 +82,8 @@ async fn main() -> Result<()> {
     let store = MemoryStore::new(local_peer_id);
     let kademlia = Kademlia::with_config(local_peer_id, store, config);
 
+    let autonat = autonat::Behaviour::new(PeerId::from(local_key.public()), Default::default());
+
     let behaviour = Behaviour {
       relay: Relay::new(PeerId::from(local_key.public()), Default::default()),
       ping: Ping::new(PingConfig::new()),
@@ -89,6 +92,7 @@ async fn main() -> Result<()> {
         local_key.public(),
       )),
       kademlia,
+      autonat,
     };
 
     // build the swarm
@@ -136,6 +140,9 @@ async fn main() -> Result<()> {
               };
           }
           SwarmEvent::Behaviour(Event::Ping(_)) => {}
+          SwarmEvent::Behaviour(Event::Autonat(e)) => {
+            info!("{e:?}");
+          }
           SwarmEvent::ConnectionEstablished {
               peer_id, endpoint, ..
           } => {
