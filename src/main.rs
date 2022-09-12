@@ -38,7 +38,7 @@ use tokio::time::Instant;
 
 use crate::constants::KEY_SEED;
 
-const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(3 * 60);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -112,7 +112,7 @@ async fn main() -> Result<()> {
     select! {
       () = &mut sleep => {
         sleep.as_mut().reset(Instant::now() + BOOTSTRAP_INTERVAL);
-        swarm.behaviour_mut().kademlia.bootstrap()?;
+        let _ = swarm.behaviour_mut().kademlia.bootstrap();
       }
       event = swarm.select_next_some() => {
         match event {
