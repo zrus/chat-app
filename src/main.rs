@@ -16,10 +16,10 @@ use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mplex::MplexConfig;
+use libp2p::relay::v2::relay::Relay;
 use libp2p::yamux::{WindowUpdateMode, YamuxConfig};
 use libp2p::{
   core::upgrade,
-  dcutr,
   identify::{Identify, IdentifyConfig},
   multiaddr::Protocol,
   noise,
@@ -82,12 +82,12 @@ async fn main() -> Result<()> {
     let kademlia = Kademlia::with_config(local_peer_id, store, config);
 
     let behaviour = Behaviour {
+      relay: Relay::new(PeerId::from(local_key.public()), Default::default()),
       ping: Ping::new(PingConfig::new()),
       identify: Identify::new(IdentifyConfig::new(
         "/TODO/0.0.1".to_string(),
         local_key.public(),
       )),
-      dcutr: dcutr::behaviour::Behaviour::new(),
       kademlia,
     };
 
@@ -118,9 +118,6 @@ async fn main() -> Result<()> {
         match event {
           SwarmEvent::NewListenAddr { address, .. } => {
               info!("Listening on {:?}", address);
-          }
-          SwarmEvent::Behaviour(Event::Dcutr(event)) => {
-              info!("{:?}", event);
           }
           SwarmEvent::Behaviour(Event::Identify(event)) => {
               info!("{:?}", event);
