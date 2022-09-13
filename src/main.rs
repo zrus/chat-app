@@ -98,6 +98,7 @@ async fn main() -> Result<()> {
     // Set a custom gossipsub
     let gossipsub_config = gossipsub::GossipsubConfigBuilder::default()
       .heartbeat_interval(std::time::Duration::from_secs(10)) // This is set to aid debugging by not cluttering the log space
+      .support_floodsub()
       .validation_mode(ValidationMode::Strict) // This sets the kind of message validation. The default is Strict (enforce message signing)
       .build()
       .expect("Valid config");
