@@ -12,18 +12,16 @@ use anyhow::Result;
 use clap::Parser;
 use futures::executor::block_on;
 use futures::stream::StreamExt;
+use futures::FutureExt;
 use libp2p::autonat;
 use libp2p::core::transport::OrTransport;
-use libp2p::core::upgrade::SelectUpgrade;
 use libp2p::dns::DnsConfig;
 use libp2p::gossipsub::{self, MessageAuthenticity, ValidationMode};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mdns::{Mdns, MdnsConfig, MdnsEvent};
-use libp2p::mplex::MplexConfig;
 use libp2p::relay::v2::client::{self, Client};
-use libp2p::yamux::{WindowUpdateMode, YamuxConfig};
 use libp2p::{
   core::upgrade,
   dcutr,
@@ -36,7 +34,7 @@ use libp2p::{
   tcp::{GenTcpConfig, TokioTcpTransport},
   Multiaddr, PeerId, Transport,
 };
-use log::{error, info};
+use log::{debug, error, info};
 use rand::Rng;
 use tokio::io::AsyncBufReadExt;
 
@@ -44,7 +42,6 @@ use behaviour::Behaviour;
 use event::Event;
 use helper::generate_ed25519;
 use opts::{Mode, Opts};
-use tokio::select;
 
 use crate::constants::{BOODSTRAP_ADDRESS, BOOT_NODES};
 
@@ -68,15 +65,15 @@ async fn main() -> Result<()> {
     .into_authentic(&local_key)
     .expect("Signing libp2p-noise static DH keypair failed.");
 
-  let yamux_config = {
-    let mut config = YamuxConfig::default();
-    config.set_max_buffer_size(16 * 1024 * 1024);
-    config.set_receive_window_size(16 * 1024 * 1024);
-    config.set_window_update_mode(WindowUpdateMode::on_receive());
-    config
-  };
+  // let yamux_config = {
+  //   let mut config = YamuxConfig::default();
+  //   config.set_max_buffer_size(16 * 1024 * 1024);
+  //   config.set_receive_window_size(16 * 1024 * 1024);
+  //   config.set_window_update_mode(WindowUpdateMode::on_receive());
+  //   config
+  // };
 
-  let multiplex_upgrade = SelectUpgrade::new(yamux_config, MplexConfig::new());
+  // let multiplex_upgrade = SelectUpgrade::new(yamux_config, MplexConfig::new());
 
   let transport = OrTransport::new(
     relay_transport,
@@ -87,7 +84,8 @@ async fn main() -> Result<()> {
   )
   .upgrade(upgrade::Version::V1)
   .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-  .multiplex(multiplex_upgrade)
+  // .multiplex(multiplex_upgrade)
+  .multiplex(libp2p::yamux::YamuxConfig::default())
   .boxed();
 
   // Create a Gossipsub topic
@@ -123,7 +121,7 @@ async fn main() -> Result<()> {
 
     let mut behaviour = Behaviour {
       client,
-      ping: Ping::new(PingConfig::new()),
+      ping: Ping::new(PingConfig::default().with_keep_alive(true)),
       identify: Identify::new(IdentifyConfig::new(
         "/TODO/0.0.1".to_string(),
         local_key.public(),
@@ -161,66 +159,23 @@ async fn main() -> Result<()> {
     .unwrap();
 
   block_on(async {
+    let mut delay = futures_timer::Delay::new(std::time::Duration::from_secs(1)).fuse();
     loop {
-      select! {
+      futures::select! {
           event = swarm.next() => {
               match event.unwrap() {
                   SwarmEvent::NewListenAddr { address, .. } => {
-                      println!("NewListenAddr Listening on {:?}", address);
+                      info!("Listening on {:?}", address);
                   }
                   event => {
                     info!("{:?}", event)
                   },
               }
           }
-          _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+          _ = delay => {
               // Likely listening on all interfaces now, thus continuing by breaking the loop.
               break;
           }
-      }
-    }
-  });
-
-  block_on(async {
-    let mut learned_observed_addr = false;
-    let mut told_relay_observed_addr = false;
-
-    loop {
-      match swarm.next().await.unwrap() {
-        SwarmEvent::NewListenAddr { .. } => {}
-        SwarmEvent::Dialing { .. } => {}
-        SwarmEvent::ConnectionEstablished { .. } => {}
-        SwarmEvent::Behaviour(Event::Ping(_)) => {}
-        SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Sent { .. })) => {
-          println!("Told relay its public address.");
-          told_relay_observed_addr = true;
-        }
-        SwarmEvent::Behaviour(Event::Identify(IdentifyEvent::Received {
-          info: IdentifyInfo { observed_addr, .. },
-          ..
-        })) => {
-          println!("Relay told us our public address: {:?}", observed_addr);
-          learned_observed_addr = true;
-        }
-        // SwarmEvent::Behaviour(Event::Mdns(event)) => match event {
-        //   MdnsEvent::Discovered(list) => {
-        //     for (peer, _) in list {
-        //       swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer);
-        //     }
-        //   }
-        //   MdnsEvent::Expired(list) => {
-        //     for (peer, _) in list {
-        //       if !swarm.behaviour().mdns.has_node(&peer) {
-        //         swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer);
-        //       }
-        //     }
-        //   }
-        // },
-        event => info!("{event:?}"),
-      }
-
-      if learned_observed_addr && told_relay_observed_addr {
-        break;
       }
     }
   });
@@ -309,11 +264,12 @@ async fn main() -> Result<()> {
               peer_id, endpoint, ..
           } => {
               info!("Established connection to {:?} via {:?}", peer_id, endpoint);
+              swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
           }
           SwarmEvent::OutgoingConnectionError { peer_id, error } => {
               error!("Outgoing connection error to {:?}: {:?}", peer_id, error);
           }
-          event => info!("Other: {event:?}"),
+          event => debug!("Other: {event:?}"),
         }
       }
     }

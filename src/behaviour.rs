@@ -9,7 +9,7 @@ use libp2p::{autonat, dcutr};
 use libp2p::{identify::Identify, NetworkBehaviour};
 
 #[derive(NetworkBehaviour)]
-#[behaviour(out_event = "Event", event_process = false)]
+#[behaviour(out_event = "Event", event_process = true)]
 pub struct Behaviour {
   pub client: Client,
   pub ping: Ping,

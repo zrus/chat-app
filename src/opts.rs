@@ -25,7 +25,7 @@ pub struct Opts {
   #[clap(
     short,
     long,
-    default_value = "/ip4/3.19.56.240/tcp/4001/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN/p2p-circuit/p2p/12D3KooWDfVV2caaXhXPsZti1wyZPtBj7kckpQ62oSCS3vxJuzyY"
+    default_value = "/ip4/3.19.56.240/tcp/4003/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN/p2p-circuit/p2p/12D3KooWDfVV2caaXhXPsZti1wyZPtBj7kckpQ62oSCS3vxJuzyY"
   )]
   pub bootstrap_address: Multiaddr,
 }
