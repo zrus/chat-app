@@ -15,13 +15,16 @@ use futures::stream::StreamExt;
 use futures::FutureExt;
 use libp2p::autonat;
 use libp2p::core::transport::OrTransport;
+use libp2p::core::upgrade::SelectUpgrade;
 use libp2p::dns::DnsConfig;
 use libp2p::gossipsub::{self, MessageAuthenticity, ValidationMode};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mdns::{Mdns, MdnsConfig, MdnsEvent};
+use libp2p::mplex::MplexConfig;
 use libp2p::relay::v2::client::{self, Client};
+use libp2p::yamux::{WindowUpdateMode, YamuxConfig};
 use libp2p::{
   core::upgrade,
   dcutr,
@@ -65,15 +68,15 @@ async fn main() -> Result<()> {
     .into_authentic(&local_key)
     .expect("Signing libp2p-noise static DH keypair failed.");
 
-  // let yamux_config = {
-  //   let mut config = YamuxConfig::default();
-  //   config.set_max_buffer_size(16 * 1024 * 1024);
-  //   config.set_receive_window_size(16 * 1024 * 1024);
-  //   config.set_window_update_mode(WindowUpdateMode::on_receive());
-  //   config
-  // };
+  let yamux_config = {
+    let mut config = YamuxConfig::default();
+    config.set_max_buffer_size(16 * 1024 * 1024);
+    config.set_receive_window_size(16 * 1024 * 1024);
+    config.set_window_update_mode(WindowUpdateMode::on_receive());
+    config
+  };
 
-  // let multiplex_upgrade = SelectUpgrade::new(yamux_config, MplexConfig::new());
+  let multiplex_upgrade = SelectUpgrade::new(yamux_config, MplexConfig::new());
 
   let transport = OrTransport::new(
     relay_transport,
@@ -84,8 +87,8 @@ async fn main() -> Result<()> {
   )
   .upgrade(upgrade::Version::V1)
   .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-  // .multiplex(multiplex_upgrade)
-  .multiplex(libp2p::yamux::YamuxConfig::default())
+  .multiplex(multiplex_upgrade)
+  // .multiplex(libp2p::yamux::YamuxConfig::default())
   .boxed();
 
   // Create a Gossipsub topic
@@ -169,7 +172,7 @@ async fn main() -> Result<()> {
                       info!("Listening on {:?}", address);
                   }
                   event => {
-                    info!("{:?}", event)
+                    debug!("{:?}", event)
                   },
               }
           }
@@ -236,7 +239,7 @@ async fn main() -> Result<()> {
               info!("{:?}", event)
           }
           SwarmEvent::Behaviour(Event::Identify(event)) => {
-              info!("{:?}", event);
+              info!("Identify: {:?}", event);
               if let IdentifyEvent::Received {
                 peer_id,
                 info:
@@ -267,8 +270,8 @@ async fn main() -> Result<()> {
               info!("Established connection to {:?} via {:?}", peer_id, endpoint);
               swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
           }
-          SwarmEvent::OutgoingConnectionError { peer_id, error } => {
-              error!("Outgoing connection error to {:?}: {:?}", peer_id, error);
+          SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
+              error!("Outgoing connection error to {peer_id:?}");
           }
           event => debug!("Other: {event:?}"),
         }
