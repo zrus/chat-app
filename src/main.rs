@@ -80,7 +80,9 @@ async fn main() -> Result<()> {
     let mut config = KademliaConfig::default();
     config
       .set_query_timeout(Duration::from_secs(60))
-      .set_connection_idle_timeout(Duration::from_secs(60));
+      .set_connection_idle_timeout(Duration::from_secs(60))
+      .set_record_ttl(Some(Duration::from_secs(0)))
+      .set_provider_record_ttl(Some(Duration::from_secs(60)));
     let store = MemoryStore::new(local_peer_id);
     let kademlia = Kademlia::with_config(local_peer_id, store, config);
 
