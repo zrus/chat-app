@@ -78,7 +78,9 @@ async fn main() -> Result<()> {
 
   let mut swarm = {
     let mut config = KademliaConfig::default();
-    config.set_query_timeout(Duration::from_secs(5 * 60));
+    config
+      .set_query_timeout(Duration::from_secs(60))
+      .set_connection_idle_timeout(Duration::from_secs(60));
     let store = MemoryStore::new(local_peer_id);
     let kademlia = Kademlia::with_config(local_peer_id, store, config);
 
@@ -86,7 +88,7 @@ async fn main() -> Result<()> {
 
     let behaviour = Behaviour {
       relay: Relay::new(PeerId::from(local_key.public()), Default::default()),
-      ping: Ping::new(PingConfig::new()),
+      ping: Ping::new(PingConfig::new().with_keep_alive(true)),
       identify: Identify::new(IdentifyConfig::new(
         "/TODO/0.0.1".to_string(),
         local_key.public(),
