@@ -117,7 +117,10 @@ async fn main() -> Result<()> {
     gossipsub.subscribe(&topic).unwrap();
 
     let mut config = KademliaConfig::default();
-    config.set_query_timeout(Duration::from_secs(5 * 60));
+    config
+      .set_query_timeout(Duration::from_secs(5 * 60))
+      .set_record_ttl(Some(Duration::from_secs(60)))
+      .set_provider_record_ttl(Some(Duration::from_secs(60)));
     let store = MemoryStore::new(local_peer_id);
     let kademlia = Kademlia::with_config(local_peer_id, store, config);
 
@@ -270,8 +273,8 @@ async fn main() -> Result<()> {
               info!("Established connection to {:?} via {:?}", peer_id, endpoint);
               swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
           }
-          SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
-              error!("Outgoing connection error to {peer_id:?}");
+          SwarmEvent::OutgoingConnectionError { peer_id, error } => {
+              error!("Outgoing connection error to {peer_id:?}: {error:?}");
           }
           event => debug!("Other: {event:?}"),
         }
