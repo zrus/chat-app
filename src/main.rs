@@ -16,7 +16,7 @@ use futures::FutureExt;
 use libp2p::autonat;
 use libp2p::core::transport::OrTransport;
 use libp2p::core::upgrade::SelectUpgrade;
-use libp2p::dns::TokioDnsConfig;
+use libp2p::dns::DnsConfig;
 use libp2p::gossipsub::{self, MessageAuthenticity, ValidationMode};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::kad::store::MemoryStore;
@@ -80,9 +80,9 @@ async fn main() -> Result<()> {
 
   let transport = OrTransport::new(
     relay_transport,
-    TokioDnsConfig::system(TokioTcpTransport::new(
+    block_on(DnsConfig::system(TokioTcpTransport::new(
       GenTcpConfig::default().port_reuse(true),
-    ))?,
+    )))?,
   )
   .upgrade(upgrade::Version::V1)
   .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
